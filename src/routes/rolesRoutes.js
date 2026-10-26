@@ -11,15 +11,41 @@ const {
 } = require("../controllers/rolesController");
 
 const authMiddleware = require("../middlewares/authMiddleware");
+const requireRole = require("../middlewares/requireRole");
 
-router.get("/", authMiddleware, getRoles);
+router.get(
+  "/",
+  authMiddleware,
+  requireRole("admin"),
+  getRoles
+);
 
-router.get("/:id", authMiddleware, getRoleById);
+router.get(
+  "/:id",
+  authMiddleware,
+  requireRole("admin"),
+  getRoleById
+);
 
-router.post("/", authMiddleware, createRole);
+router.post(
+  "/",
+  authMiddleware,
+  requireRole("admin"),
+  createRole
+);
 
-router.put("/:id", authMiddleware, updateRole);
+router.put(
+  "/:id",
+  authMiddleware,
+  requireRole("admin"),
+  updateRole
+);
 
-router.delete("/:id", authMiddleware, deleteRole);
+router.delete(
+  "/:id",
+  authMiddleware,
+  requireRole("admin"),
+  deleteRole
+);
 
 module.exports = router;

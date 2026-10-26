@@ -9,11 +9,14 @@ const {
   createProduct,
   getProducts,
   getProductById,
+  getLowStockProducts,
   updateProduct,
-  deleteProduct
+  deleteProduct,
+  adjustStock
 } = require("../controllers/productController");
 
 const authMiddleware = require("../middlewares/authMiddleware");
+const requireRole = require("../middlewares/requireRole");
 
 // =========================
 // UPLOAD DIRECTORY
@@ -120,6 +123,17 @@ router.get(
 );
 
 // =========================
+// GET LOW STOCK PRODUCTS
+// (didaftarkan sebelum /:id agar tidak tertelan param)
+// =========================
+
+router.get(
+  "/low-stock",
+  authMiddleware,
+  getLowStockProducts
+);
+
+// =========================
 // GET PRODUCT BY ID
 // =========================
 
@@ -138,6 +152,17 @@ router.put(
   authMiddleware,
   upload.single("image"),
   updateProduct
+);
+
+// =========================
+// ADJUST STOCK — admin only
+// =========================
+
+router.post(
+  "/:id/adjust",
+  authMiddleware,
+  requireRole("admin"),
+  adjustStock
 );
 
 // =========================

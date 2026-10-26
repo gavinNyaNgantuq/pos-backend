@@ -11,20 +11,46 @@ const {
 } = require("../controllers/userController");
 
 const authMiddleware = require("../middlewares/authMiddleware");
+const requireRole = require("../middlewares/requireRole");
 
-// CREATE
-router.post("/", authMiddleware, createUser);
+// CREATE — admin only
+router.post(
+  "/",
+  authMiddleware,
+  requireRole("admin"),
+  createUser
+);
 
-// READ ALL
-router.get("/", authMiddleware, getUsers);
+// READ ALL — admin only
+router.get(
+  "/",
+  authMiddleware,
+  requireRole("admin"),
+  getUsers
+);
 
-// READ BY ID
-router.get("/:id", authMiddleware, getUserById);
+// READ BY ID — admin only
+router.get(
+  "/:id",
+  authMiddleware,
+  requireRole("admin"),
+  getUserById
+);
 
-// UPDATE
-router.put("/:id", authMiddleware, updateUser);
+// UPDATE — admin only
+router.put(
+  "/:id",
+  authMiddleware,
+  requireRole("admin"),
+  updateUser
+);
 
-// DELETE (SOFT DELETE)
-router.delete("/:id", authMiddleware, deleteUser);
+// DELETE (SOFT DELETE) — admin only
+router.delete(
+  "/:id",
+  authMiddleware,
+  requireRole("admin"),
+  deleteUser
+);
 
 module.exports = router;

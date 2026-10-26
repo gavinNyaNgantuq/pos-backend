@@ -8,7 +8,10 @@ const createCheckout = async (req, res) => {
       products,
       discount = 0,
       payment,
-      payment_method = "cash"
+      payment_method = "cash",
+      promotion_code = null,
+      payment_ref = null,
+      shift_id = null
     } = req.body || {};
 
     const userId = req.user.id;
@@ -75,6 +78,80 @@ const createCheckout = async (req, res) => {
       await db.getConnection();
 
     await connection.beginTransaction();
+
+    // VALIDASI SHIFT (opsional — enforcement penuh menyusul
+    // setelah flow shift terbukti stabil).
+    let shiftId = null;
+
+    if (shift_id !== null && shift_id !== undefined) {
+      const [shiftRows] = await connection.query(
+        `SELECT id
+         FROM shifts
+         WHERE id = ?
+           AND user_id = ?
+           AND status = 'open'
+         LIMIT 1`,
+        [shift_id, userId]
+      );
+
+      if (shiftRows.length === 0) {
+        throw new Error(
+          "Shift tidak valid atau sudah ditutup"
+        );
+      }
+
+      shiftId = shiftRows[0].id;
+    }
+
+    // VALIDASI PROMOTION CODE (opsional).
+    let promotion = null;
+
+    if (
+      promotion_code !== null &&
+      promotion_code !== undefined &&
+      String(promotion_code).trim() !== ""
+    ) {
+      const [promoRows] = await connection.query(
+        `SELECT id, code, type, value, min_purchase,
+                quota, used, starts_at, ends_at
+         FROM promotions
+         WHERE code = ?
+           AND status = 1
+         LIMIT 1`,
+        [String(promotion_code).trim()]
+      );
+
+      if (promoRows.length === 0) {
+        throw new Error(
+          "Kode promo tidak valid"
+        );
+      }
+
+      promotion = promoRows[0];
+
+      const now = new Date();
+
+      if (
+        (promotion.starts_at &&
+          new Date(promotion.starts_at) > now) ||
+        (promotion.ends_at &&
+          new Date(promotion.ends_at) < now)
+      ) {
+        throw new Error(
+          "Kode promo sudah tidak berlaku"
+        );
+      }
+
+      if (
+        promotion.quota !== null &&
+        Number(promotion.used) >=
+          Number(promotion.quota)
+      ) {
+        throw new Error(
+          "Kuota kode promo sudah habis"
+        );
+      }
+    }
 
     // CARI PPN 11%
     const [taxRows] =
@@ -185,13 +262,64 @@ const createCheckout = async (req, res) => {
       });
     }
 
-    // HITUNG DISCOUNT
+    // HITUNG PROMO (opsional, sebelum diskon manual).
+    let promotionId = null;
+    let promotionCode = null;
+    let promotionAmount = 0;
+
+    if (promotion) {
+      if (
+        totalBeforeDiscount <
+        Number(promotion.min_purchase)
+      ) {
+        throw new Error(
+          `Minimum pembelian promo ini ${Number(
+            promotion.min_purchase
+          )}`
+        );
+      }
+
+      if (promotion.type === "nominal") {
+        promotionAmount = Math.min(
+          Number(promotion.value),
+          totalBeforeDiscount
+        );
+      } else {
+        promotionAmount =
+          totalBeforeDiscount *
+          (Number(promotion.value) / 100);
+      }
+
+      promotionId = promotion.id;
+      promotionCode = promotion.code;
+
+      // Kunci kuota promo (atomic, anti race).
+      const [quotaResult] = await connection.query(
+        `UPDATE promotions
+         SET used = used + 1,
+             updated_at = NOW()
+         WHERE id = ?
+           AND (quota IS NULL OR used < quota)`,
+        [promotion.id]
+      );
+
+      if (quotaResult.affectedRows === 0) {
+        throw new Error(
+          "Kuota kode promo sudah habis"
+        );
+      }
+    }
+
+    const totalAfterPromo =
+      totalBeforeDiscount - promotionAmount;
+
+    // HITUNG DISCOUNT (manual, persen).
     const discountAmount =
-      totalBeforeDiscount *
+      totalAfterPromo *
       (discountRate / 100);
 
     const totalAfterDiscount =
-      totalBeforeDiscount -
+      totalAfterPromo -
       discountAmount;
 
     // TOTAL SEBELUM TAX
@@ -247,6 +375,7 @@ const createCheckout = async (req, res) => {
         user_id,
         total_before_discount,
         discount,
+        promotion_id,
         total_after_discount,
         total_before_tax,
         tax_id,
@@ -256,17 +385,20 @@ const createCheckout = async (req, res) => {
         total_after_tax,
         payment,
         payment_method,
+        payment_ref,
+        shift_id,
         \`change\`,
         status,
         created_at,
         created_by
       )
       VALUES
-      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), ?)`,
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), ?)`,
       [
         userId,
         totalBeforeDiscount,
         discountRate,
+        promotionId,
         totalAfterDiscount,
         totalBeforeTax,
         taxId,
@@ -276,6 +408,8 @@ const createCheckout = async (req, res) => {
         totalAfterTax,
         paymentAmount,
         payment_method,
+        payment_ref,
+        shiftId,
         change,
         userId
       ]
@@ -283,6 +417,34 @@ const createCheckout = async (req, res) => {
 
     const transactionId =
       transactionResult.insertId;
+
+    // NOMOR INVOICE PROFESIONAL: INV-YYYYMMDD-XXXX
+    // (XXXX dari id auto-increment — unik by construction,
+    // kompatibel dengan transaksi lama yang di-backfill
+    // dengan formula yang sama).
+    await connection.query(
+      `UPDATE transactions
+       SET invoice_no = CONCAT(
+         'INV-',
+         DATE_FORMAT(NOW(), '%Y%m%d'),
+         '-',
+         LPAD(?, 4, '0')
+       )
+       WHERE id = ?`,
+      [transactionId, transactionId]
+    );
+
+    const [invoiceRows] = await connection.query(
+      `SELECT invoice_no
+       FROM transactions
+       WHERE id = ?`,
+      [transactionId]
+    );
+
+    const invoiceNo =
+      invoiceRows.length > 0
+        ? invoiceRows[0].invoice_no
+        : null;
 
     // CREATE TRANSACTION PRODUCTS
     for (const item of productData) {
@@ -344,6 +506,21 @@ const createCheckout = async (req, res) => {
     // COMMIT
     await connection.commit();
 
+    const { logAudit } = require("../services/auditService");
+
+    logAudit({
+      userId,
+      action: "transaction.checkout",
+      entity: "transaction",
+      entityId: transactionId,
+      meta: {
+        invoice_no: invoiceNo,
+        total: totalAfterTax,
+        payment_method
+      },
+      ip: req.ip
+    });
+
     // RESPONSE
     return res.status(201).json({
       message:
@@ -353,6 +530,9 @@ const createCheckout = async (req, res) => {
         transaction_id:
           transactionId,
 
+        invoice_no:
+          invoiceNo,
+
         total_before_discount:
           totalBeforeDiscount,
 
@@ -361,6 +541,15 @@ const createCheckout = async (req, res) => {
 
         discount_amount:
           discountAmount,
+
+        promotion_id:
+          promotionId,
+
+        promotion_code:
+          promotionCode,
+
+        promotion_amount:
+          promotionAmount,
 
         total_after_discount:
           totalAfterDiscount,
@@ -388,6 +577,12 @@ const createCheckout = async (req, res) => {
 
         payment_method:
           payment_method,
+
+        payment_ref:
+          payment_ref,
+
+        shift_id:
+          shiftId,
 
         change:
           change

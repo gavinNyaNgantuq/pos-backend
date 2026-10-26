@@ -12,6 +12,11 @@ const transactionProductRoutes = require("./routes/transactionProductRoutes");
 const transactionProductItemsTaxRoutes = require("./routes/transactionProductItemsTaxRoutes");
 const checkoutRoutes = require("./routes/checkoutRoutes");
 const rolesRoutes = require("./routes/rolesRoutes");
+const promotionRoutes = require("./routes/promotionRoutes");
+const shiftRoutes = require("./routes/shiftRoutes");
+const auditLogRoutes = require("./routes/auditLogRoutes");
+const dashboardRoutes = require("./routes/dashboardRoutes");
+const reportRoutes = require("./routes/reportRoutes");
 
 const app = express();
 
@@ -91,5 +96,15 @@ app.use(
 app.use("/api/checkout", checkoutRoutes);
 
 app.use("/api/roles", rolesRoutes);
+
+app.use("/api/promotions", promotionRoutes);
+
+app.use("/api/shifts", shiftRoutes);
+
+app.use("/api/audit-logs", auditLogRoutes);
+
+app.use("/api/dashboard", dashboardRoutes);
+
+app.use("/api/reports", reportRoutes);
 
 module.exports = app;

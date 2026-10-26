@@ -1,5 +1,6 @@
 const bcrypt = require("bcrypt");
 const db = require("../config/database");
+const { logAudit } = require("../services/auditService");
 
 // =========================
 // CREATE USER
@@ -99,7 +100,7 @@ const createUser = async (req, res) => {
     // INSERT USER
     // =========================
 
-    await db.query(
+    const [userResult] = await db.query(
       `INSERT INTO users
       (
         username,
@@ -121,6 +122,15 @@ const createUser = async (req, res) => {
         createdBy
       ]
     );
+
+    logAudit({
+      userId: createdBy,
+      action: "user.create",
+      entity: "user",
+      entityId: userResult.insertId,
+      meta: { username, email, role_id },
+      ip: req.ip
+    });
 
     return res.status(201).json({
       message: "User berhasil dibuat"
@@ -407,6 +417,15 @@ const updateUser = async (req, res) => {
       );
     }
 
+    logAudit({
+      userId: updatedBy,
+      action: "user.update",
+      entity: "user",
+      entityId: Number(id),
+      meta: { username, email, role_id },
+      ip: req.ip
+    });
+
     return res.status(200).json({
       message: "User berhasil diupdate"
     });
@@ -457,6 +476,15 @@ const deleteUser = async (req, res) => {
       WHERE id = ?`,
       [deletedBy, id]
     );
+
+    logAudit({
+      userId: deletedBy,
+      action: "user.delete",
+      entity: "user",
+      entityId: Number(id),
+      meta: null,
+      ip: req.ip
+    });
 
     return res.status(200).json({
       message: "User berhasil dihapus"
